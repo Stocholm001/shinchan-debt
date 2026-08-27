@@ -4,6 +4,18 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>แผนบริหารหนี้ชินจัง</title>
+
+<!-- PWA: ติดตั้งลงมือถือได้ เปิดเต็มจอเหมือนแอปจริง -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#FFE135">
+<link rel="icon" type="image/png" href="favicon-64.png">
+<!-- iOS: Safari ไม่อ่าน manifest ต้องใช้ tag เฉพาะพวกนี้ -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="หนี้ชินจัง">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+
 <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700;800&family=Fredoka+One&display=swap" rel="stylesheet">
 <style>
 :root{
@@ -127,6 +139,16 @@ body{font-family:'Sarabun',sans-serif;background:var(--yellow);min-height:100vh;
 .pay-input:focus{outline:none;border-color:var(--orange);background:white;}
 .pay-input::placeholder{color:#ccc;font-weight:400;font-size:0.78rem;}
 .edit-badge{font-size:0.58rem;font-weight:800;background:var(--yellow);border:2px solid var(--dark);border-radius:5px;padding:2px 4px;white-space:nowrap;flex-shrink:0;}
+.pay-label{display:flex;align-items:center;justify-content:space-between;gap:6px;}
+.copy-prev-btn{font-family:'Sarabun',sans-serif;font-size:0.62rem;font-weight:800;background:var(--green-light);color:var(--dark);border:2px solid var(--dark);border-radius:6px;padding:2px 6px;cursor:pointer;box-shadow:1px 1px 0 var(--dark);-webkit-appearance:none;transition:transform .1s;white-space:nowrap;flex-shrink:0;}
+.copy-prev-btn:active{transform:scale(.94);}
+.alloc-del-btn{font-family:'Sarabun',sans-serif;font-size:0.66rem;font-weight:800;background:var(--red);color:#fff;border:2px solid var(--dark);border-radius:50%;width:20px;height:20px;line-height:1;padding:0;margin-left:2px;cursor:pointer;box-shadow:1px 1px 0 var(--dark);-webkit-appearance:none;flex-shrink:0;}
+.alloc-del-btn:active{transform:scale(.9);}
+.btn-add-cat{margin-top:10px;width:100%;font-family:'Sarabun',sans-serif;font-size:0.85rem;font-weight:800;background:var(--yellow);color:var(--dark);border:var(--border);border-radius:10px;padding:9px;cursor:pointer;box-shadow:var(--shadow-sm);-webkit-appearance:none;transition:transform .1s;}
+.btn-add-cat:active{transform:scale(.97);}
+.alloc-mode-btn{font-family:'Fredoka One',cursive;font-size:0.82rem;font-weight:800;background:var(--yellow);color:var(--dark);border:2px solid var(--dark);border-radius:7px;width:26px;height:28px;flex-shrink:0;cursor:pointer;box-shadow:var(--shadow-sm);-webkit-appearance:none;transition:transform .1s;padding:0;line-height:1;}
+.alloc-mode-btn:active{transform:scale(.9);}
+.pct-input.amt-mode{width:72px;border-color:var(--green);background:#EAFBF0;}
 .remaining-display{font-family:'Fredoka One',cursive;font-size:0.95rem;padding:6px 9px;border-radius:7px;border:2px solid var(--dark);background:var(--gray);text-align:right;transition:all .3s;}
 .rem-decreased{color:var(--green);background:#EFFFEF!important;border-color:var(--green)!important;}
 .rem-zero{color:var(--green);background:#EFFFEF!important;border-color:var(--green)!important;font-size:0.8rem;}
@@ -453,6 +475,7 @@ body::before{content:'';position:fixed;bottom:80px;left:-15px;width:120px;height
       <div class="alloc-grid" id="allocGrid"></div>
       <div class="alloc-bar-track" id="allocBar"></div>
       <div class="alloc-total-label" id="allocTotal"></div>
+      <button class="btn-add-cat" id="addCatBtn" onclick="addAllocCat()">➕ เพิ่มหมวดงบเอง</button>
     </div>
     <div class="section-box">
       <h3 id="monthPayTitle">✏️ กรอกยอดชำระ</h3>
@@ -513,6 +536,8 @@ const ALLOC_CATS = [
   {key:'living',label:'ค่าครองชีพ',color:'#2D6BE4',defaultPct:40},
   {key:'other', label:'อื่นๆ',      color:'#9B59B6',defaultPct:10},
 ];
+const DEFAULT_ALLOC_KEYS = ALLOC_CATS.map(c=>c.key); // 4 หมวดหลัก (ลบไม่ได้)
+const ALLOC_PALETTE = ['#FF8C00','#00B4D8','#E56399','#7B2CBF','#43AA8B','#F72585','#4361EE','#FFB703','#8AC926','#6A4C93'];
 
 // Pre-April paid (ม.ค.-มี.น. from Excel)
 const PRE_APR_PAID = {}; // ไม่มี pre-paid
@@ -878,6 +903,7 @@ function updateInitial(debtId, val){
 // ============================================================
 // RENDER SALARY
 // ============================================================
+let ALLOC_MODE={}; // สถานะโหมดกรอกงบต่อหมวด: 'pct' (ค่าเริ่มต้น) หรือ 'baht' — เป็นสถานะหน้าจอเท่านั้น ไม่บันทึกลงข้อมูล
 function renderSalarySection(month){
   const ms=ST.months[month];
   const salary=ms.salary||0;
@@ -888,12 +914,20 @@ function renderSalarySection(month){
   document.getElementById('allocGrid').innerHTML=ALLOC_CATS.map(cat=>{
     const pct=ms.alloc[cat.key]??cat.defaultPct;
     const amt=Math.round((salary)*pct/100);
-    return `<div class="alloc-item">
-      <div class="alloc-left"><div class="alloc-dot" style="background:${cat.color}"></div><div class="alloc-label">${cat.label}</div></div>
-      <div class="alloc-right">
-        <input class="pct-input" type="number" inputmode="decimal" min="0" max="100" value="${pct}" id="pct-${cat.key}" oninput="onAllocInput('${month}','${cat.key}',this.value)">
+    const mode=ALLOC_MODE[cat.key]||'pct';
+    const pctTxt=(pct%1===0?pct:(+pct).toFixed(1));
+    const inner = mode==='baht'
+      ? `<input class="pct-input amt-mode" type="number" inputmode="decimal" min="0" value="${amt}" id="pct-${cat.key}" oninput="onAllocAmountInput('${month}','${cat.key}',this.value)">
+        <span style="font-size:.75rem;font-weight:700">บ.</span>
+        <div class="alloc-amount" style="color:${cat.color}" id="alloc-amt-${cat.key}">${pctTxt}%</div>`
+      : `<input class="pct-input" type="number" inputmode="decimal" min="0" max="100" value="${pct}" id="pct-${cat.key}" oninput="onAllocInput('${month}','${cat.key}',this.value)">
         <span style="font-size:.75rem;font-weight:700">%</span>
-        <div class="alloc-amount" style="color:${cat.color}" id="alloc-amt-${cat.key}">${fmt(amt)} บ.</div>
+        <div class="alloc-amount" style="color:${cat.color}" id="alloc-amt-${cat.key}">${fmt(amt)} บ.</div>`;
+    return `<div class="alloc-item">
+      <div class="alloc-left"><div class="alloc-dot" style="background:${cat.color}"></div><div class="alloc-label">${cat.label}</div>${DEFAULT_ALLOC_KEYS.includes(cat.key)?'':`<button class="alloc-del-btn" onclick="removeAllocCat('${cat.key}')" title="ลบหมวดนี้">✕</button>`}</div>
+      <div class="alloc-right">
+        <button class="alloc-mode-btn" id="allocmode-${cat.key}" onclick="toggleAllocMode('${month}','${cat.key}')" title="สลับโหมดกรอก % หรือ จำนวนเงิน">${mode==='baht'?'฿':'%'}</button>
+        ${inner}
       </div>
     </div>`;
   }).join('');
@@ -907,12 +941,74 @@ function onAllocInput(month,key,val){
   ST.months[month].alloc[key]=parseFloat(val)||0;
   updateAllocAmounts(month);
 }
+// โหมดกรอกเป็นจำนวนเงิน (บาท) แล้วคำนวณ % ให้อัตโนมัติ — ยังเก็บค่าเป็น % เหมือนเดิม จึงไม่กระทบข้อมูล/สูตรอื่น
+function onAllocAmountInput(month,key,val){
+  const salary=ST.months[month].salary||0;
+  const baht=Math.max(0,parseFloat(val)||0);
+  const pct=salary>0?(baht/salary*100):0;
+  ST.months[month].alloc[key]=pct;
+  const el=document.getElementById('alloc-amt-'+key);
+  if(el)el.textContent=(pct%1===0?pct:(+pct).toFixed(1))+'%';
+  updateAllocBar(month);
+  hideSalary();
+}
+// สลับระหว่างโหมด % กับ โหมดจำนวนเงิน (สถานะหน้าจอเท่านั้น ไม่บันทึกทับข้อมูล)
+function toggleAllocMode(month,key){
+  ALLOC_MODE[key]=(ALLOC_MODE[key]==='baht')?'pct':'baht';
+  renderSalarySection(month);
+}
+// รีเซ็ต ALLOC_CATS ให้เหลือ 4 หมวดหลัก แล้วเติมหมวดที่ผู้ใช้เพิ่มไว้จาก ST.customCats (เรียกหลังโหลดข้อมูลผู้ใช้)
+function syncAllocCats(){
+  for(let i=ALLOC_CATS.length-1;i>=0;i--){
+    if(!DEFAULT_ALLOC_KEYS.includes(ALLOC_CATS[i].key)) ALLOC_CATS.splice(i,1);
+  }
+  (ST.customCats||[]).forEach(c=>{
+    if(!ALLOC_CATS.some(x=>x.key===c.key))
+      ALLOC_CATS.push({key:c.key,label:c.label,color:c.color,defaultPct:0});
+  });
+}
+function nextAllocColor(){
+  const used=ALLOC_CATS.map(c=>c.color);
+  return ALLOC_PALETTE.find(c=>!used.includes(c)) || ALLOC_PALETTE[Math.floor(Math.random()*ALLOC_PALETTE.length)];
+}
+// เพิ่มหมวดงบใหม่เอง — เก็บใน ST.customCats (บันทึก/โหลดผ่านของเดิม) เริ่มต้นที่ 0% ไม่กระทบยอดหมวดอื่น
+function addAllocCat(){
+  const month=window._currentMonth;
+  if(!month||month==='overview') return;
+  const name=(prompt('ตั้งชื่อหมวดงบใหม่ (เช่น ลงทุน, ท่องเที่ยว, ประกัน)')||'').trim();
+  if(!name) return;
+  const key='cat_'+Date.now().toString(36);
+  const color=nextAllocColor();
+  if(!ST.customCats) ST.customCats=[];
+  ST.customCats.push({key,label:name,color,defaultPct:0});
+  ALLOC_CATS.push({key,label:name,color,defaultPct:0});
+  MONTHS.forEach(m=>{ if(ST.months[m]&&ST.months[m].alloc&&ST.months[m].alloc[key]===undefined) ST.months[m].alloc[key]=0; });
+  renderSalarySection(month);
+  saveData();
+}
+// ลบหมวดที่ผู้ใช้เพิ่มเอง (หมวดหลัก 4 หมวดลบไม่ได้)
+function removeAllocCat(key){
+  if(DEFAULT_ALLOC_KEYS.includes(key)) return;
+  if(!confirm('ลบหมวดนี้ใช่ไหม? เปอร์เซ็นต์ของหมวดนี้จะถูกนำออก')) return;
+  ST.customCats=(ST.customCats||[]).filter(c=>c.key!==key);
+  const i=ALLOC_CATS.findIndex(c=>c.key===key);
+  if(i>-1) ALLOC_CATS.splice(i,1);
+  MONTHS.forEach(m=>{ if(ST.months[m]&&ST.months[m].alloc) delete ST.months[m].alloc[key]; });
+  renderSalarySection(window._currentMonth);
+  saveData();
+}
 function updateAllocAmounts(month){
   const salary=ST.months[month].salary||0;
   ALLOC_CATS.forEach(cat=>{
     const pct=ST.months[month].alloc[cat.key]||0;
     const el=document.getElementById('alloc-amt-'+cat.key);
-    if(el)el.textContent=fmt(Math.round(salary*pct/100))+' บ.';
+    if(el){
+      if((ALLOC_MODE[cat.key]||'pct')==='baht'){
+        el.textContent=(pct%1===0?pct:(+pct).toFixed(1))+'%';
+      }else{
+        el.textContent=fmt(Math.round(salary*pct/100))+' บ.';
+      }
+    }
   });
   updateAllocBar(month);
   // อัปเดต blur display (ซ่อนตัวเลข)
@@ -953,6 +1049,8 @@ function renderMonthList(month){
     const paidNow=Number(ST.months[month]?.payments[d.id]||0);
     const remaining=Math.max(0,opening-paidNow);
     const isClosed=opening<=0;
+    const prevMonth=mIdx>0?MONTHS[mIdx-1]:null;
+    const prevPay=prevMonth?Number(ST.months[prevMonth]?.payments[d.id]||0):0;
     return `<div class="debt-row ${isClosed?'closed-debt':''}" id="drow-${month}-${d.id}">
       <div class="debt-row-top">
         <div class="pri-badge ${priClass(d.priority,remaining,opening)}" id="badge-${month}-${d.id}">${(opening<=0||remaining<=0)?'✓':d.priority}</div>
@@ -962,7 +1060,7 @@ function renderMonthList(month){
       ${isClosed?`<div style="text-align:center;padding:5px 0;font-weight:700;color:var(--green)">✅ ปิดหนี้นี้แล้ว ไม่ต้องชำระ</div>`:`
       <div class="debt-row-bottom">
         <div class="inp-group"><label>ยอดต้นเดือน (บาท)</label><div class="val-display">${fmt(opening)}</div></div>
-        <div class="inp-group"><label>💛 ยอดชำระเดือนนี้ (บาท)</label>
+        <div class="inp-group"><label class="pay-label">💛 ยอดชำระเดือนนี้ (บาท)${(prevMonth&&prevPay>0)?`<button class="copy-prev-btn" onclick="copyPrevPay('${month}',${d.id},${opening})" title="ใช้ยอดชำระของเดือน${MNAME[prevMonth]} (${fmt(prevPay)})">📋 คัดลอก</button>`:''}</label>
           <div class="pay-wrap">
             <input class="pay-input" type="number" inputmode="decimal" id="pay-${month}-${d.id}" min="0" max="${opening}" placeholder="กรอกยอดที่จ่าย…" value="${paidNow>0?paidNow:''}" oninput="onPay('${month}',${d.id},this.value,${opening})">
             <div class="edit-badge">✏️</div>
@@ -981,6 +1079,18 @@ function renderMonthList(month){
 // ============================================================
 // PAYMENT HANDLER
 // ============================================================
+// คัดลอกยอดชำระของเดือนก่อนหน้ามากรอกให้อัตโนมัติ (จำกัดไม่เกินยอดต้นเดือนปัจจุบัน) แล้วอัปเดตผ่าน onPay เดิม
+function copyPrevPay(month,debtId,opening){
+  const mIdx=MONTHS.indexOf(month);
+  if(mIdx<=0)return;
+  const prevMonth=MONTHS[mIdx-1];
+  const prevPay=Number(ST.months[prevMonth]?.payments[debtId]||0);
+  if(prevPay<=0)return;
+  const val=Math.min(prevPay,opening);
+  const input=document.getElementById(`pay-${month}-${debtId}`);
+  if(input)input.value=val;
+  onPay(month,debtId,val,opening);
+}
 function onPay(month,debtId,rawVal,opening){
   let val=Math.min(Math.max(parseFloat(rawVal)||0,0),opening);
   if(!ST.months[month])ST.months[month]={salary:0,alloc:{},payments:{}};
@@ -1280,6 +1390,7 @@ async function loadUserData(userId, displayName) {
     document.getElementById('loginScreen').style.display = 'none';
 
     // render app
+    syncAllocCats();
     window._currentMonth = 'overview';
     document.getElementById('titleText').textContent = ST.appTitle || 'แผนบริหารหนี้ชินจัง';
     renderTopSummary();
@@ -1550,6 +1661,17 @@ if (document.readyState === 'loading') {
   tryRestoreSession();
 }
 
+</script>
+
+<!-- PWA: ลงทะเบียน service worker (path แบบ relative รองรับ GitHub Pages ใต้ /shinchan-debt/) -->
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js')
+      .then(reg => console.log('SW registered:', reg.scope))
+      .catch(err => console.log('SW register failed:', err));
+  });
+}
 </script>
 </body>
 </html>
